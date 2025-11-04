@@ -1,0 +1,20 @@
+<?php
+// Copy this file to monitor.config.php and fill in your credentials
+return [
+    // URL to check
+    'TARGET_URL' => 'https://cloud.gruss.li/',
+
+    // Telegram bot details
+    'TELEGRAM_BOT_TOKEN' => '123456789:REPLACE_WITH_YOUR_TOKEN',
+    'TELEGRAM_CHAT_ID' => 'REPLACE_WITH_CHAT_ID',
+
+    // Timeouts and thresholds
+    'REQUEST_TIMEOUT_SECONDS' => 10,
+    'ALERT_AFTER_SECONDS' => 120, // notify after 2 minutes of downtime
+
+    // Maintenance window (local time Europe/Zurich)
+    'MAINTENANCE_START' => '04:20',
+    'MAINTENANCE_END' => '04:25',
+];
+
+
