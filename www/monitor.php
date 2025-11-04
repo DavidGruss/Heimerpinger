@@ -1,6 +1,6 @@
 <?php
 // Minimal downtime monitor for cloud.gruss.li with Telegram notifications
-// Runs as a web endpoint. Configure an OVH scheduled task (every minute) to hit this URL.
+// Runs as a web endpoint. Configure an task to hit this URL.
 
 // Timezone for the maintenance window
 date_default_timezone_set('Europe/Zurich');
