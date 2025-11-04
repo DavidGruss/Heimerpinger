@@ -1,4 +1,4 @@
-Note: The `index.html` and `style.css` are not from me; they are from CodePen: https://codepen.io/cobra_winfrey/pen/ygojOG
+Note: The `index.html` and `style.css` are not from me; they are from a CodePen-Project of Adam Kuhn: https://codepen.io/cobra_winfrey/pen/ygojOG
 
 ### Downtime monitor (PHP) for cloud.gruss.li
 
