@@ -1,3 +1,5 @@
+Note: The `index.html` and `style.css` are not from me; they are from CodePen: https://codepen.io/cobra_winfrey/pen/ygojOG
+
 ### Downtime monitor (PHP) for cloud.gruss.li
 
 This repo adds a tiny PHP endpoint that checks `https://cloud.gruss.li/` every time it is hit and sends Telegram alerts if the site is down for more than 2 minutes. It skips a daily maintenance window from 04:20–04:25 (Europe/Zurich).
