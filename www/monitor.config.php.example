@@ -4,6 +4,9 @@ return [
     // URL to check
     'TARGET_URL' => 'https://cloud.gruss.li/',
 
+    // Human-readable name for notifications (defaults to host from TARGET_URL)
+    'DISPLAY_NAME' => 'cloud.gruss.li',
+
     // Telegram bot details
     'TELEGRAM_BOT_TOKEN' => '123456789:REPLACE_WITH_YOUR_TOKEN',
     'TELEGRAM_CHAT_ID' => 'REPLACE_WITH_CHAT_ID',

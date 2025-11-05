@@ -25,6 +25,7 @@ if (!is_array($config)) {
 }
 
 $targetUrl = $config['TARGET_URL'] ?? 'https://cloud.gruss.li/';
+$displayName = $config['DISPLAY_NAME'] ?? (parse_url($targetUrl, PHP_URL_HOST) ?: 'service');
 $telegramBotToken = $config['TELEGRAM_BOT_TOKEN'] ?? '';
 $telegramChatId = $config['TELEGRAM_CHAT_ID'] ?? '';
 $requestTimeoutSeconds = isset($config['REQUEST_TIMEOUT_SECONDS']) ? (int)$config['REQUEST_TIMEOUT_SECONDS'] : 10;
@@ -257,7 +258,7 @@ if ($isUp) {
     if ($state['last_status'] === 'down' && $state['last_alert_sent'] === 'down') {
         $duration = $state['down_since'] ? ($now - (int)$state['down_since']) : null;
         $mins = $duration !== null ? round($duration / 60, 1) : 'N/A';
-        $msg = "✅ cloud.gruss.li recovered. Downtime ~${mins} min.";
+        $msg = "✅ ${displayName} recovered. Downtime ~${mins} min.";
         // Always send recovery even if muted, then auto-unmute
         send_telegram($telegramBotToken, $telegramChatId, $msg);
         $state['last_alert_sent'] = 'recover';
@@ -286,9 +287,9 @@ $state['last_check'] = $now;
 
 $downFor = $state['down_since'] ? ($now - (int)$state['down_since']) : 0;
 if ($downFor >= $alertAfterSeconds) {
-	$mins = round($downFor / 60, 1);
-	if ($state['last_alert_sent'] !== 'down') {
-		$msg = "❌ cloud.gruss.li appears DOWN for ${mins} minutes.";
+	$mins = round($downFor / 60);
+    if ($state['last_alert_sent'] !== 'down') {
+        $msg = "❌ ${displayName} appears DOWN for ${mins} minutes.";
 		if (!$state['muted']) {
 			send_telegram($telegramBotToken, $telegramChatId, $msg);
 		}
@@ -297,8 +298,8 @@ if ($downFor >= $alertAfterSeconds) {
 	} else {
 		// Already alerted; send periodic reminders unless muted
 		$lastRem = isset($state['last_reminder_sent_ts']) ? (int)$state['last_reminder_sent_ts'] : null;
-		if (!$state['muted'] && ($lastRem === null || ($now - $lastRem) >= $downReminderIntervalSeconds)) {
-			$msg = "❌ Still DOWN (~${mins} min).";
+        if (!$state['muted'] && ($lastRem === null || ($now - $lastRem) >= $downReminderIntervalSeconds)) {
+            $msg = "❌ ${displayName} still DOWN (~${mins} min).";
 			send_telegram($telegramBotToken, $telegramChatId, $msg);
 			$state['last_reminder_sent_ts'] = $now;
 		}
