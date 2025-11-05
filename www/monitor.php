@@ -31,6 +31,9 @@ $requestTimeoutSeconds = isset($config['REQUEST_TIMEOUT_SECONDS']) ? (int)$confi
 $alertAfterSeconds = isset($config['ALERT_AFTER_SECONDS']) ? (int)$config['ALERT_AFTER_SECONDS'] : 120;
 $debugAlways = !empty($config['DEBUG_ALWAYS']);
 
+// Down reminder interval (seconds) for continued pings during downtime
+$downReminderIntervalSeconds = isset($config['DOWN_REMINDER_INTERVAL_SECONDS']) ? (int)$config['DOWN_REMINDER_INTERVAL_SECONDS'] : 300;
+
 // Daily maintenance window to skip alerts (HH:MM in local timezone)
 $maintenanceStart = $config['MAINTENANCE_START'] ?? '04:20';
 $maintenanceEnd = $config['MAINTENANCE_END'] ?? '04:25';
@@ -61,6 +64,9 @@ function read_state($path) {
             'down_since' => null,       // unix ts
             'last_alert_sent' => 'none',// 'none' | 'down' | 'recover'
             'last_check' => null,       // unix ts
+            'muted' => false,           // whether reminders are muted until recover
+            'last_reminder_sent_ts' => null, // unix ts of last down reminder
+            'telegram_update_offset' => null, // last processed update id + 1
         ];
     }
     $raw = @file_get_contents($path);
@@ -70,6 +76,9 @@ function read_state($path) {
             'down_since' => null,
             'last_alert_sent' => 'none',
             'last_check' => null,
+            'muted' => false,
+            'last_reminder_sent_ts' => null,
+            'telegram_update_offset' => null,
         ];
     }
     $data = json_decode($raw, true);
@@ -79,6 +88,9 @@ function read_state($path) {
             'down_since' => null,
             'last_alert_sent' => 'none',
             'last_check' => null,
+            'muted' => false,
+            'last_reminder_sent_ts' => null,
+            'telegram_update_offset' => null,
         ];
     }
     return $data;
@@ -144,6 +156,63 @@ function send_telegram($token, $chatId, $message) {
     return $err === 0 && $status >= 200 && $status < 300 && $resp !== false;
 }
 
+function process_telegram_commands($token, $chatId, &$state) {
+	if ($token === '' || $chatId === '') {
+		return;
+	}
+	$baseUrl = 'https://api.telegram.org/bot' . rawurlencode($token) . '/getUpdates';
+	$params = [];
+	if (!empty($state['telegram_update_offset'])) {
+		$params['offset'] = (int)$state['telegram_update_offset'];
+	}
+	$params['timeout'] = 0;
+	$url = $baseUrl . (empty($params) ? '' : ('?' . http_build_query($params)));
+	$ch = curl_init();
+	curl_setopt_array($ch, [
+		CURLOPT_URL => $url,
+		CURLOPT_RETURNTRANSFER => true,
+		CURLOPT_TIMEOUT => 10,
+	]);
+	$resp = curl_exec($ch);
+	$err = curl_errno($ch);
+	curl_close($ch);
+	if ($err !== 0 || $resp === false) {
+		return;
+	}
+	$payload = json_decode($resp, true);
+	if (!is_array($payload) || empty($payload['ok']) || empty($payload['result'])) {
+		return;
+	}
+	$maxUpdateId = null;
+	foreach ($payload['result'] as $update) {
+		if (!isset($update['update_id'])) {
+			continue;
+		}
+		$maxUpdateId = max($maxUpdateId ?? $update['update_id'], $update['update_id']);
+		$msg = $update['message'] ?? $update['edited_message'] ?? null;
+		if (!$msg) {
+			continue;
+		}
+		$chat = $msg['chat']['id'] ?? null;
+		$text = $msg['text'] ?? '';
+		if ((string)$chat !== (string)$chatId) {
+			continue; // ignore other chats
+		}
+		$cmd = trim(strtolower($text));
+		if ($cmd === '/mute' || $cmd === '/mute@') {
+			$state['muted'] = true;
+			// optional ack
+			send_telegram($token, $chatId, '🔕 Muted until recovery.');
+		} elseif ($cmd === '/unmute' || $cmd === '/unmute@') {
+			$state['muted'] = false;
+			send_telegram($token, $chatId, '🔔 Unmuted.');
+		}
+	}
+	if ($maxUpdateId !== null) {
+		$state['telegram_update_offset'] = $maxUpdateId + 1;
+	}
+}
+
 function maybe_send_debug($enabled, $token, $chatId, $statusCode, $payloadArray) {
     if (!$enabled) {
         return;
@@ -159,6 +228,10 @@ function maybe_send_debug($enabled, $token, $chatId, $statusCode, $payloadArray)
 }
 
 $now = time();
+// Read state early to handle commands and suppression before any alerts
+$state = read_state($statePath);
+process_telegram_commands($telegramBotToken, $telegramChatId, $state);
+write_state($statePath, $state);
 if (within_window($maintenanceStart, $maintenanceEnd, $now)) {
     $state = read_state($statePath);
     // Do not alert inside the window; reset counters to avoid stale alerts
@@ -177,6 +250,7 @@ if (within_window($maintenanceStart, $maintenanceEnd, $now)) {
 }
 
 $isUp = check_url_up($targetUrl, $requestTimeoutSeconds);
+
 $state = read_state($statePath);
 
 if ($isUp) {
@@ -184,8 +258,11 @@ if ($isUp) {
         $duration = $state['down_since'] ? ($now - (int)$state['down_since']) : null;
         $mins = $duration !== null ? round($duration / 60, 1) : 'N/A';
         $msg = "✅ cloud.gruss.li recovered. Downtime ~${mins} min.";
+        // Always send recovery even if muted, then auto-unmute
         send_telegram($telegramBotToken, $telegramChatId, $msg);
         $state['last_alert_sent'] = 'recover';
+        $state['muted'] = false;
+        $state['last_reminder_sent_ts'] = null;
     }
     $state['last_status'] = 'up';
     $state['down_since'] = null;
@@ -208,11 +285,24 @@ $state['last_status'] = 'down';
 $state['last_check'] = $now;
 
 $downFor = $state['down_since'] ? ($now - (int)$state['down_since']) : 0;
-if ($downFor >= $alertAfterSeconds && $state['last_alert_sent'] !== 'down') {
-    $mins = round($downFor / 60, 1);
-    $msg = "❌ cloud.gruss.li appears DOWN for ${mins} minutes.";
-    send_telegram($telegramBotToken, $telegramChatId, $msg);
-    $state['last_alert_sent'] = 'down';
+if ($downFor >= $alertAfterSeconds) {
+	$mins = round($downFor / 60, 1);
+	if ($state['last_alert_sent'] !== 'down') {
+		$msg = "❌ cloud.gruss.li appears DOWN for ${mins} minutes.";
+		if (!$state['muted']) {
+			send_telegram($telegramBotToken, $telegramChatId, $msg);
+		}
+		$state['last_alert_sent'] = 'down';
+		$state['last_reminder_sent_ts'] = $now;
+	} else {
+		// Already alerted; send periodic reminders unless muted
+		$lastRem = isset($state['last_reminder_sent_ts']) ? (int)$state['last_reminder_sent_ts'] : null;
+		if (!$state['muted'] && ($lastRem === null || ($now - $lastRem) >= $downReminderIntervalSeconds)) {
+			$msg = "❌ Still DOWN (~${mins} min).";
+			send_telegram($telegramBotToken, $telegramChatId, $msg);
+			$state['last_reminder_sent_ts'] = $now;
+		}
+	}
 }
 
 write_state($statePath, $state);
