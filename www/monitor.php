@@ -34,6 +34,11 @@ $debugAlways = !empty($config['DEBUG_ALWAYS']);
 
 // Down reminder interval (seconds) for continued pings during downtime
 $downReminderIntervalSeconds = isset($config['DOWN_REMINDER_INTERVAL_SECONDS']) ? (int)$config['DOWN_REMINDER_INTERVAL_SECONDS'] : 300;
+// HTTP status to return once outage threshold exceeded (cron-job.org requires 200)
+$downHttpStatus = isset($config['DOWN_HTTP_STATUS']) ? (int)$config['DOWN_HTTP_STATUS'] : 200;
+if ($downHttpStatus < 100 || $downHttpStatus > 599) {
+    $downHttpStatus = 200;
+}
 
 // Daily maintenance window to skip alerts (HH:MM in local timezone)
 $maintenanceStart = $config['MAINTENANCE_START'] ?? '04:20';
@@ -286,7 +291,8 @@ $state['last_status'] = 'down';
 $state['last_check'] = $now;
 
 $downFor = $state['down_since'] ? ($now - (int)$state['down_since']) : 0;
-if ($downFor >= $alertAfterSeconds) {
+$hardOutage = $downFor >= $alertAfterSeconds;
+if ($hardOutage) {
 	$mins = round($downFor / 60);
     if ($state['last_alert_sent'] !== 'down') {
         $msg = "❌ ${displayName} appears DOWN for ${mins} minutes.";
@@ -307,18 +313,26 @@ if ($downFor >= $alertAfterSeconds) {
 }
 
 write_state($statePath, $state);
-// Return 200 for short blips (< alertAfterSeconds), 503 once threshold exceeded
-$statusCode = ($downFor >= $alertAfterSeconds) ? 503 : 200;
+// Return 200 for short blips (< alertAfterSeconds). For hard outages return configured code (default 200 to keep cron-job.org polling).
+$statusCode = $hardOutage ? $downHttpStatus : 200;
 http_response_code($statusCode);
 header('Content-Type: application/json');
 header('X-Monitor-Status: down');
+$extraHeaders = [
+    'X-Monitor-Hard-Outage' => $hardOutage ? '1' : '0',
+    'X-Monitor-Configured-Down-Http' => (string)$downHttpStatus,
+];
+foreach ($extraHeaders as $headerName => $headerValue) {
+    header($headerName . ': ' . $headerValue);
+}
 $payload = [
     'ok' => true,
     'status' => 'down',
     'down_since' => $state['down_since'],
     'down_for_seconds' => $downFor,
     'threshold_seconds' => $alertAfterSeconds,
-    'hard_outage' => $downFor >= $alertAfterSeconds,
+    'hard_outage' => $hardOutage,
+    'http_status' => $statusCode,
     'time' => date(DATE_ATOM, $now),
 ];
 maybe_send_debug($debugAlways || (isset($_GET['debug']) && $_GET['debug'] === '1'), $telegramBotToken, $telegramChatId, $statusCode, $payload);
